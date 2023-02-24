@@ -153,7 +153,7 @@ def get_args_parser():
     # Dataset parameters
     parser.add_argument('--data-path', default='', type=str,
                         help='dataset path')
-    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
+    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR10', 'CIFAR100', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
@@ -186,8 +186,8 @@ def get_args_parser():
 
 
 def main(args):
-    if args.distillation_type != 'none' and args.finetune and not args.eval:
-        raise NotImplementedError("Finetuning with distillation not yet supported")
+    # if args.distillation_type != 'none' and args.finetune and not args.eval:
+    #     raise NotImplementedError("Finetuning with distillation not yet supported")
 
     device = torch.device(args.device)
 
@@ -355,12 +355,16 @@ def main(args):
         new_state_dict = OrderedDict()
         for k in checkpoint['model']:
             if k[:7] != 'module.':
-                new_state_dict = checkpoint['model']
+                new_state_dict[k] = checkpoint['model'][k]
                 break
             new_key = k[7:]
             new_state_dict[new_key] = checkpoint['model'][k]
 
-        teacher_model.load_state_dict(new_state_dict)
+        if teacher_model.default_cfg['num_classes'] != teacher_model.num_classes:
+            new_state_dict.pop('head.weight')
+            new_state_dict.pop('head.bias')
+
+        teacher_model.load_state_dict(new_state_dict, strict=False)
         teacher_model.to(device)
         teacher_model.eval()
 
