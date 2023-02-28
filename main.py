@@ -22,12 +22,13 @@ from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
-from customized_forward import register_forward
+# from customized_forward import register_forward
 from datasets import build_dataset
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch, evaluate, generate_attention_maps_ms
 from losses import DistillationLoss
 from samplers import RASampler
 import utils
+import mcam_cait, mcam_deit
 
 
 def get_args_parser():
@@ -151,9 +152,11 @@ def get_args_parser():
     parser.add_argument('--finetune', default='', help='finetune from checkpoint')
 
     # Dataset parameters
+    # for voc12 datasets/voc12/VOCdevkit/VOC2012
     parser.add_argument('--data-path', default='', type=str,
                         help='dataset path')
-    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR10', 'CIFAR100', 'IMNET', 'INAT', 'INAT19'],
+    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR10', 'CIFAR100', 'IMNET', 'INAT', 'INAT19', 'VOC12',
+        'VOC12MS', 'COCO', 'COCOMS'],
                         type=str, help='Image Net dataset path')
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
@@ -182,6 +185,34 @@ def get_args_parser():
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     parser.add_argument('--local_rank', default=0, type=int)
+
+    parser.add_argument('--patch-size', type=int, default=16, help='patch size')
+    parser.add_argument('--distillation-gamma', default=1.0, type=float)
+    parser.add_argument('--patch-attn-refine', action='store_true', help='whether to refine with patch attn')
+    parser.add_argument('--attention-type', type=str, default='fused')
+     # for cait, n-layers < the number of CA layer!
+    parser.add_argument('--n-layers', type=int, default=3, help='extract attention maps from the last layers (for student or single model training)')
+    parser.add_argument('--n-layers-t', type=int, default=2, help='extract attention maps from the last layers (for teacher)')
+
+
+    # for voc12 and coco datasets
+    parser.add_argument('--multilabel', action='store_true', help='multilabel classification')
+    parser.add_argument('--img-list', default='', type=str, help='image list path')
+    parser.add_argument('--label-file-path', type=str, default=None)
+
+    # generating attention maps
+    parser.add_argument("--scales", nargs='+', type=float)
+    parser.add_argument('--gen-attention-maps', action='store_true')
+    parser.add_argument('--attention-dir', type=str, default=None)
+    parser.add_argument('--visualize-cls-attn', action='store_true')
+
+    parser.add_argument('--gt-dir', type=str, default=None)
+    parser.add_argument('--cam-npy-dir', type=str, default=None)
+
+    parser.add_argument('--out-crf', type=str, default=None)
+    parser.add_argument("--low-alpha", default=1, type=int)
+    parser.add_argument("--high-alpha", default=12, type=int)
+
     return parser
 
 
@@ -244,7 +275,7 @@ def main(args):
 
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
-    if mixup_active:
+    if mixup_active and not args.multilabel:
         mixup_fn = Mixup(
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
@@ -259,7 +290,7 @@ def main(args):
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
     )
-    register_forward(model, args.model)
+    # register_forward(model, args.model)
 
     if args.finetune:
         if args.finetune.startswith('https'):
@@ -276,24 +307,24 @@ def main(args):
                 del checkpoint_model[k]
 
         # interpolate position embedding
-        pos_embed_checkpoint = checkpoint_model['pos_embed']
-        embedding_size = pos_embed_checkpoint.shape[-1]
-        num_patches = model.patch_embed.num_patches
-        num_extra_tokens = model.pos_embed.shape[-2] - num_patches
-        # height (== width) for the checkpoint position embedding
-        orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
-        # height (== width) for the new position embedding
-        new_size = int(num_patches ** 0.5)
-        # class_token and dist_token are kept unchanged
-        extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
-        # only the position tokens are interpolated
-        pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
-        pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
-        pos_tokens = torch.nn.functional.interpolate(
-            pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
-        pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
-        new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
-        checkpoint_model['pos_embed'] = new_pos_embed
+        # pos_embed_checkpoint = checkpoint_model['pos_embed']
+        # embedding_size = pos_embed_checkpoint.shape[-1]
+        # num_patches = model.patch_embed.num_patches
+        # num_extra_tokens = model.pos_embed.shape[-2] - num_patches
+        # # height (== width) for the checkpoint position embedding
+        # orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
+        # # height (== width) for the new position embedding
+        # new_size = int(num_patches ** 0.5)
+        # # class_token and dist_token are kept unchanged
+        # extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
+        # # only the position tokens are interpolated
+        # pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
+        # pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
+        # pos_tokens = torch.nn.functional.interpolate(
+        #     pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
+        # pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
+        # new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
+        # checkpoint_model['pos_embed'] = new_pos_embed
 
         model.load_state_dict(checkpoint_model, strict=False)
 
@@ -324,7 +355,9 @@ def main(args):
 
     criterion = LabelSmoothingCrossEntropy()
 
-    if args.mixup > 0.:
+    if args.multilabel:
+        criterion = torch.nn.MultiLabelSoftMarginLoss()
+    elif args.mixup > 0.:
         # smoothing is handled with mixup label transform
         criterion = SoftTargetCrossEntropy()
     elif args.smoothing:
@@ -342,7 +375,7 @@ def main(args):
             num_classes=args.nb_classes,
             global_pool='avg',
         )
-        register_forward(teacher_model, args.teacher_model)
+        # register_forward(teacher_model, args.teacher_model)
 
         if args.teacher_path.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -378,7 +411,7 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         model_without_ddp.load_state_dict(checkpoint['model'])
-        if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
+        if not args.eval and not args.gen_attention_maps and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
@@ -388,8 +421,26 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        if args.multilabel:
+            test_stats = evaluate(data_loader_val, model, device, args)
+            print(f"mAP of the network on the {len(dataset_val)} test images: {test_stats['mAP']*100:.1f}%")
+        else:
+            test_stats = evaluate(data_loader_val, model, device, args)
+            print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        return
+    
+    if args.gen_attention_maps:
+        # checkpoint = torch.load(args.resume, map_location='cpu')
+        # model.load_state_dict(checkpoint['model'])
+        dataset_train_, args.nb_classes = build_dataset(is_train=False, gen_attn=True, args=args)
+        data_loader_train_ = torch.utils.data.DataLoader(
+            dataset_train_,
+            batch_size=1,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_mem,
+            drop_last=False,
+        )
+        generate_attention_maps_ms(data_loader_train_, model, device, args)
         return
 
     # test_stats = evaluate(data_loader_val, teacher_model, device)
@@ -405,28 +456,46 @@ def main(args):
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
-            args.clip_grad, model_ema, mixup_fn,
-            set_training_mode=args.finetune == ''  # keep in eval mode during finetuning
+            args.clip_grad, model_ema, mixup_fn, args=args
+            # set_training_mode=args.finetune == ''  # keep in eval mode during finetuning
         )
 
         lr_scheduler.step(epoch)
-        if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint.pth']
-            for checkpoint_path in checkpoint_paths:
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'model_ema': get_state_dict(model_ema),
-                    'scaler': loss_scaler.state_dict(),
-                    'args': args,
-                }, checkpoint_path)
+        
 
-        test_stats = evaluate(data_loader_val, model, device)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
-        max_accuracy = max(max_accuracy, test_stats["acc1"])
-        print(f'Max accuracy: {max_accuracy:.2f}%')
+        test_stats = evaluate(data_loader_val, model, device, args)
+        if args.multilabel:
+            print(f"mAP of the network on the {len(dataset_val)} test images: {test_stats['mAP']*100:.1f}%")
+            if test_stats["mAP"] > max_accuracy and args.output_dir:
+                checkpoint_paths = [output_dir / 'checkpoint_best.pth']
+                for checkpoint_path in checkpoint_paths:
+                    utils.save_on_master({
+                        'model': model_without_ddp.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'epoch': epoch,
+                        'model_ema': get_state_dict(model_ema),
+                        'scaler': loss_scaler.state_dict(),
+                        'args': args,
+                    }, checkpoint_path)
+            max_accuracy = max(max_accuracy, test_stats["mAP"])
+            print(f'Max mAP: {max_accuracy * 100:.2f}%')
+        else:
+            if test_stats["acc1"] > max_accuracy and args.output_dir:
+                checkpoint_paths = [output_dir / 'checkpoint_best.pth']
+                for checkpoint_path in checkpoint_paths:
+                    utils.save_on_master({
+                        'model': model_without_ddp.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'epoch': epoch,
+                        'model_ema': get_state_dict(model_ema),
+                        'scaler': loss_scaler.state_dict(),
+                        'args': args,
+                    }, checkpoint_path)
+            print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+            max_accuracy = max(max_accuracy, test_stats["acc1"])
+            print(f'Max accuracy: {max_accuracy:.2f}%')
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
@@ -436,7 +505,19 @@ def main(args):
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
-
+           
+           
+    checkpoint_paths = [output_dir / 'checkpoint.pth']
+    for checkpoint_path in checkpoint_paths:    
+        utils.save_on_master({
+            'model': model_without_ddp.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'lr_scheduler': lr_scheduler.state_dict(),
+            'epoch': epoch,
+            'model_ema': get_state_dict(model_ema),
+            'scaler': loss_scaler.state_dict(),
+            'args': args,
+        }, checkpoint_path)
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))

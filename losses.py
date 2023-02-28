@@ -14,6 +14,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from utils import refine_cam
 
 
 class DistillationLoss(nn.Module):
@@ -39,58 +40,87 @@ class DistillationLoss(nn.Module):
         self.w_rand = args.w_rand
         self.K = args.K
 
-    def forward(self, inputs, outputs, labels):
+        self.patch_attn_refine = args.patch_attn_refine
+        self.patch_size = args.patch_size
+        self.gamma = args.distillation_gamma
+        self.n_layers_t = args.n_layers_t
+
+    def forward(self, inputs, outputs_s, labels):
         """
         Args:
             inputs: The original inputs that are feed to the teacher model
-            outputs: the outputs of the model to be trained. It is expected to be
+            outputs_s: the outputs of the model to be trained. It is expected to be
                 either a Tensor, or a Tuple[Tensor, Tensor], with the original output
                 in the first position and the distillation predictions as the second output
             labels: the labels for the base criterion
         """
         # only consider the case of [outputs, block_outs_s] or [(outputs, outputs_kd), block_outs_s]
         # i.e. 'require_feat' is always True when we compute loss
-        block_outs_s = outputs[1]
-        if isinstance(outputs[0], torch.Tensor):
-            outputs = outputs_kd = outputs[0]
+        if isinstance(outputs_s[0], torch.Tensor):
+            outputs = outputs_kd = outputs_s[0]
         else:
-            outputs, outputs_kd = outputs[0]
+            outputs, outputs_kd = outputs_s[0]
 
-        base_loss = self.base_criterion(outputs, labels)
+        patch_logits_s, block_outs_s, cls_attentions_s, patch_attn_s = outputs_s[1:]
 
+        cls_tok_base_loss = self.base_criterion(outputs, labels)
+        patch_base_loss = self.base_criterion(patch_logits_s, labels)
+        # base loss
         if self.distillation_type == 'none':
-            return base_loss
+            return cls_tok_base_loss + patch_base_loss
 
         # don't backprop throught the teacher
         with torch.no_grad():
-            teacher_outputs, block_outs_t = self.teacher_model(inputs)
+            teacher_outputs, patch_logits_t, block_outs_t, cls_attentions_t, patch_attn_t = self.teacher_model(
+                inputs, n_layers=self.n_layers_t, require_feat=True, attention_type='fused', is_teacher=True)
 
+        # distillation loss
         if self.distillation_type == 'soft':
             T = self.tau
-            distillation_loss = F.kl_div(
+            distillation_loss_cls_tok = F.kl_div(
                 F.log_softmax(outputs_kd / T, dim=1),
                 F.log_softmax(teacher_outputs / T, dim=1),
                 reduction='batchmean',
                 log_target=True
             ) * (T * T)
+            distillation_loss_patch = F.kl_div(
+                F.log_softmax(patch_logits_s / T, dim=1),
+                F.log_softmax(patch_logits_t / T, dim=1),
+                reduction='batchmean',
+                log_target=True
+            ) * (T * T)
         elif self.distillation_type == 'hard':
-            distillation_loss = F.cross_entropy(outputs_kd, teacher_outputs.argmax(dim=1))
+            distillation_loss_cls_tok = F.cross_entropy(
+                outputs_kd, teacher_outputs.argmax(dim=1))
+            distillation_loss_patch = F.cross_entropy(
+                patch_logits_s, patch_logits_t.argmax(dim=1))
+        # cam_loss
+        if self.patch_attn_refine:
+            cls_attentions_s = refine_cam(
+                inputs, cls_attentions_s, patch_attn_s, self.patch_size)
+            cls_attentions_t = refine_cam(
+                inputs, cls_attentions_t, patch_attn_t, self.patch_size)
+        loss_mse = nn.MSELoss(reduction='sum')
+        cam_loss = loss_mse(cls_attentions_s, cls_attentions_t) / inputs.shape[0]
 
-        loss_base = (1 - self.alpha) * base_loss
-        loss_dist = self.alpha * distillation_loss
+        loss_base = (1 - self.alpha) * (cls_tok_base_loss + patch_base_loss)
+        loss_dist = self.alpha * \
+            (distillation_loss_cls_tok + distillation_loss_patch)
+        loss_cam = self.gamma * cam_loss
         loss_mf_sample, loss_mf_patch, loss_mf_rand = mf_loss(block_outs_s, block_outs_t, self.layer_ids_s,
-                                  self.layer_ids_t, self.K, self.w_sample, self.w_patch, self.w_rand)
+                                                              self.layer_ids_t, self.K, self.w_sample, self.w_patch, self.w_rand)
         loss_mf_sample = self.beta * loss_mf_sample
         loss_mf_patch = self.beta * loss_mf_patch
         loss_mf_rand = self.beta * loss_mf_rand
-        return loss_base, loss_dist, loss_mf_sample, loss_mf_patch, loss_mf_rand
+        return loss_base, loss_dist, loss_cam, loss_mf_sample, loss_mf_patch, loss_mf_rand
 
 
 def mf_loss(block_outs_s, block_outs_t, layer_ids_s, layer_ids_t, K, w_sample, w_patch, w_rand, max_patch_num=0):
     losses = [[], [], []]  # loss_mf_sample, loss_mf_patch, loss_mf_rand
     for id_s, id_t in zip(layer_ids_s, layer_ids_t):
         extra_tk_num = block_outs_s[0].shape[1] - block_outs_t[0].shape[1]
-        F_s = block_outs_s[id_s][:, extra_tk_num:, :]  # remove additional tokens
+        # remove additional tokens
+        F_s = block_outs_s[id_s][:, extra_tk_num:, :]
         F_t = block_outs_t[id_t]
         if max_patch_num > 0:
             F_s = merge(F_s, max_patch_num)

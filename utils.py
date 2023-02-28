@@ -13,6 +13,7 @@ import datetime
 
 import torch
 import torch.distributed as dist
+import numpy as np
 
 
 class SmoothedValue(object):
@@ -236,3 +237,32 @@ def init_distributed_mode(args):
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
+
+def crf_inference(img, probs, t=10, scale_factor=1, labels=21):
+    import pydensecrf.densecrf as dcrf
+    from pydensecrf.utils import unary_from_softmax
+
+    h, w = img.shape[:2]
+    n_labels = labels
+
+    d = dcrf.DenseCRF2D(w, h, n_labels)
+
+    unary = unary_from_softmax(probs)
+    unary = np.ascontiguousarray(unary)
+
+    d.setUnaryEnergy(unary)
+    d.addPairwiseGaussian(sxy=3/scale_factor, compat=3)
+    d.addPairwiseBilateral(sxy=80/scale_factor, srgb=13, rgbim=np.copy(img), compat=10)
+    Q = d.inference(t)
+
+    return np.array(Q).reshape((n_labels, h, w))
+
+def refine_cam(inputs, cls_attentions, patch_attn, patch_size):
+    # refine cam
+    w, h = inputs.shape[2] - inputs.shape[2] % patch_size, inputs.shape[3] - inputs.shape[3] % patch_size
+    w_featmap = w // patch_size
+    h_featmap = h // patch_size
+    # patch_attn = torch.sum(patch_attn, dim=0)
+    patch_attn = torch.mean(patch_attn, dim=0)
+    cls_attentions = torch.matmul(patch_attn.unsqueeze(1), cls_attentions.view(cls_attentions.shape[0],cls_attentions.shape[1], -1, 1)).reshape(cls_attentions.shape[0],cls_attentions.shape[1], w_featmap, h_featmap)
+    return cls_attentions
