@@ -1,4 +1,7 @@
-python3 -m torch.distributed.launch --nproc_per_node=8 main.py \
+# python3 -m torch.distributed.launch --nproc_per_node=8 main.py \
+python3 -m torch.distributed.launch --nproc_per_node=$ARNOLD_WORKER_GPU \
+    --nnodes=$ARNOLD_WORKER_NUM --node_rank=$ARNOLD_ID --master_addr=$ARNOLD_WORKER_0_HOST \
+    --master_port=$ARNOLD_WORKER_0_PORT  main.py \
     --finetune models/origin_teacher/S24_224.pth \
     --distillation-type none \
     --resume models/student/cait-s24_deit-tiny/checkpoint.pth \
