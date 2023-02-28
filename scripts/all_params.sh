@@ -1,9 +1,9 @@
-python -m torch.distributed.launch --nproc_per_node=8 main.py \
+python3 -m torch.distributed.launch --nproc_per_node=8 main.py \
     --finetune models/origin_teacher/S24_224.pth \
     --distillation-type none \
     --resume models/student/cait-s24_deit-tiny/checkpoint.pth \
     --epochs 60 \
-    --output_dir models/fine_tune_teacher_on_imagenet \
+    --output_dir models/finetune_teacher_on_imagenet/MCAMCait_s24_224 \
     --data-set VOC12MS \
     --data-path datasets/voc12/VOCdevkit/VOC2012 \
     --model MCAMCait_s24_224 \
@@ -36,8 +36,8 @@ python -m torch.distributed.launch --nproc_per_node=8 main.py \
     --scales 1.0 \
     --attention-dir cam_results/test/attn-patchrefine \
     --cam-npy-dir cam_results/test/attn-patchrefine-npy \
-    --out-crf cam_results/test/attn-patchrefine-npy-crf 
-     
+    --out-crf cam_results/test/attn-patchrefine-npy-crf \
+    2>&1 | tee train.log
 
 
 
