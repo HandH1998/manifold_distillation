@@ -27,7 +27,7 @@ import cv2
 
 def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, loss_scaler, args, max_norm: float = 0,
+                    device: torch.device, epoch: int, loss_scaler, args,
                     model_ema: Optional[ModelEma] = None, mixup_fn: Optional[Mixup] = None,
                     set_training_mode=True):
     model.train(set_training_mode)
@@ -46,9 +46,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
         with torch.cuda.amp.autocast():
             outputs = model(samples, n_layers=args.n_layers, require_feat=True, attention_type=args.attention_type)
             # loss = criterion(samples, outputs, targets)
-
-            loss_base, loss_dist, loss_cam, loss_mf_sample, loss_mf_patch, loss_mf_rand = criterion(samples, outputs, targets)
-            loss = loss_base + loss_dist + loss_cam + loss_mf_sample + loss_mf_patch + loss_mf_rand
+            if args.distillation_type != 'none':
+                loss_base, loss_dist, loss_cam, loss_mf_sample, loss_mf_patch, loss_mf_rand = criterion(samples, outputs, targets)
+                loss = loss_base + loss_dist + loss_cam + loss_mf_sample + loss_mf_patch + loss_mf_rand
+            else:
+                loss_cls_tok_base, loss_patch_base = criterion(samples, outputs, targets)
+                loss = loss_cls_tok_base + loss_patch_base
 
         loss_value = loss.item()
 
@@ -61,7 +64,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
 
         # this attribute is added by timm on one optimizer (adahessian)
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
-        loss_scaler(loss, optimizer, clip_grad=max_norm,
+        loss_scaler(loss, optimizer, clip_grad=args.clip_grad,
                     parameters=model.parameters(), create_graph=is_second_order)
 
         if torch.cuda.is_available():
@@ -70,13 +73,19 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
             model_ema.update(model)
 
         metric_logger.update(loss=loss_value)
-        metric_logger.update(loss_base=loss_base.item())
-        metric_logger.update(loss_dist=loss_dist.item())
-        metric_logger.update(loss_cam=loss_cam.item())
-        metric_logger.update(loss_mf_sample=loss_mf_sample.item())
-        metric_logger.update(loss_mf_patch=loss_mf_patch.item())
-        metric_logger.update(loss_mf_rand=loss_mf_rand.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        if args.distillation_type != 'none':
+            metric_logger.update(loss_base=loss_base.item())
+            metric_logger.update(loss_dist=loss_dist.item())
+            metric_logger.update(loss_cam=loss_cam.item())
+            metric_logger.update(loss_mf_sample=loss_mf_sample.item())
+            metric_logger.update(loss_mf_patch=loss_mf_patch.item())
+            metric_logger.update(loss_mf_rand=loss_mf_rand.item())
+        else:
+            metric_logger.update(loss_cls_tok_base=loss_cls_tok_base.item())
+            metric_logger.update(loss_patch_base=loss_patch_base.item())
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)

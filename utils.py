@@ -266,3 +266,21 @@ def refine_cam(inputs, cls_attentions, patch_attn, patch_size):
     patch_attn = torch.mean(patch_attn, dim=0)
     cls_attentions = torch.matmul(patch_attn.unsqueeze(1), cls_attentions.view(cls_attentions.shape[0],cls_attentions.shape[1], -1, 1)).reshape(cls_attentions.shape[0],cls_attentions.shape[1], w_featmap, h_featmap)
     return cls_attentions
+
+def process_pre_weights(model, checkpoint):
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k in checkpoint['model']:
+        if k[:7] != 'module.':
+            new_state_dict[k] = checkpoint['model'][k]
+        else:
+            new_key = k[7:]
+            new_state_dict[new_key] = checkpoint['model'][k]
+    
+    state_dict = model.state_dict()
+    for k in ['head.weight', 'head.bias', 'head_dist.weight', 'head_dist.bias']:
+        if k in new_state_dict and new_state_dict[k].shape != state_dict[k].shape:
+            print(f"Removing key {k} from pretrained checkpoint")
+            del new_state_dict[k]
+    return new_state_dict
+

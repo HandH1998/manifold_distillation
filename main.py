@@ -22,7 +22,6 @@ from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
-# from customized_forward import register_forward
 from datasets import build_dataset
 from engine import train_one_epoch, evaluate, generate_attention_maps_ms
 from losses import DistillationLoss
@@ -56,9 +55,7 @@ def get_args_parser():
     parser.add_argument('--drop-path', type=float, default=0.0, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
 
-    parser.add_argument('--model-ema', action='store_true')
-    parser.add_argument('--no-model-ema', action='store_false', dest='model_ema')
-    parser.set_defaults(model_ema=True)
+    parser.add_argument('--model-ema', action='store_true', default=False)
     parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
     parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
 
@@ -90,7 +87,6 @@ def get_args_parser():
                         help='warmup learning rate (default: 1e-6)')
     parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR',
                         help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
-
     parser.add_argument('--decay-epochs', type=float, default=30, metavar='N',
                         help='epoch interval to decay LR')
     parser.add_argument('--warmup-epochs', type=int, default=5, metavar='N',
@@ -107,7 +103,8 @@ def get_args_parser():
                         help='Color jitter factor (default: 0.4)')
     parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME',
                         help='Use AutoAugment policy. "v0" or "original". " + \
-                             "(default: rand-m9-mstd0.5-inc1)'),
+                             "(default: rand-m9-mstd0.5-inc1)')
+    parser.add_argument('--enable-smoothing', action='store_true')
     parser.add_argument('--smoothing', type=float, default=0.1, help='Label smoothing (default: 0.1)')
     parser.add_argument('--train-interpolation', type=str, default='bicubic',
                         help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
@@ -127,6 +124,7 @@ def get_args_parser():
                         help='Do not random erase first (clean) augmentation split')
 
     # * Mixup params
+    parser.add_argument('--enable-mixup', action='store_true')
     parser.add_argument('--mixup', type=float, default=0.8,
                         help='mixup alpha, mixup enabled if > 0. (default: 0.8)')
     parser.add_argument('--cutmix', type=float, default=1.0,
@@ -161,7 +159,6 @@ def get_args_parser():
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
@@ -186,6 +183,7 @@ def get_args_parser():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     parser.add_argument('--local_rank', default=0, type=int)
 
+    # for cam loss
     parser.add_argument('--patch-size', type=int, default=16, help='patch size')
     parser.add_argument('--distillation-gamma', default=1.0, type=float)
     parser.add_argument('--patch-attn-refine', action='store_true', help='whether to refine with patch attn')
@@ -193,7 +191,6 @@ def get_args_parser():
      # for cait, n-layers < the number of CA layer!
     parser.add_argument('--n-layers', type=int, default=3, help='extract attention maps from the last layers (for student or single model training)')
     parser.add_argument('--n-layers-t', type=int, default=2, help='extract attention maps from the last layers (for teacher)')
-
 
     # for voc12 and coco datasets
     parser.add_argument('--multilabel', action='store_true', help='multilabel classification')
@@ -205,10 +202,7 @@ def get_args_parser():
     parser.add_argument('--gen-attention-maps', action='store_true')
     parser.add_argument('--attention-dir', type=str, default=None)
     parser.add_argument('--visualize-cls-attn', action='store_true')
-
-    parser.add_argument('--gt-dir', type=str, default=None)
     parser.add_argument('--cam-npy-dir', type=str, default=None)
-
     parser.add_argument('--out-crf', type=str, default=None)
     parser.add_argument("--low-alpha", default=1, type=int)
     parser.add_argument("--high-alpha", default=12, type=int)
@@ -274,8 +268,8 @@ def main(args):
     )
 
     mixup_fn = None
-    mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
-    if mixup_active and not args.multilabel:
+    # mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
+    if args.enable_mixup and not args.multilabel:
         mixup_fn = Mixup(
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
@@ -290,7 +284,6 @@ def main(args):
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
     )
-    # register_forward(model, args.model)
 
     if args.finetune:
         if args.finetune.startswith('https'):
@@ -299,34 +292,8 @@ def main(args):
         else:
             checkpoint = torch.load(args.finetune, map_location='cpu')
 
-        checkpoint_model = checkpoint['model']
-        state_dict = model.state_dict()
-        for k in ['head.weight', 'head.bias', 'head_dist.weight', 'head_dist.bias']:
-            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
-                print(f"Removing key {k} from pretrained checkpoint")
-                del checkpoint_model[k]
-
-        # interpolate position embedding
-        # pos_embed_checkpoint = checkpoint_model['pos_embed']
-        # embedding_size = pos_embed_checkpoint.shape[-1]
-        # num_patches = model.patch_embed.num_patches
-        # num_extra_tokens = model.pos_embed.shape[-2] - num_patches
-        # # height (== width) for the checkpoint position embedding
-        # orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
-        # # height (== width) for the new position embedding
-        # new_size = int(num_patches ** 0.5)
-        # # class_token and dist_token are kept unchanged
-        # extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
-        # # only the position tokens are interpolated
-        # pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
-        # pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
-        # pos_tokens = torch.nn.functional.interpolate(
-        #     pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
-        # pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
-        # new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
-        # checkpoint_model['pos_embed'] = new_pos_embed
-
-        model.load_state_dict(checkpoint_model, strict=False)
+        new_state_dict = utils.process_pre_weights(model, checkpoint)
+        model.load_state_dict(new_state_dict, strict=False)
 
     model.to(device)
 
@@ -357,10 +324,10 @@ def main(args):
 
     if args.multilabel:
         criterion = torch.nn.MultiLabelSoftMarginLoss()
-    elif args.mixup > 0.:
+    elif args.enable_mixup:
         # smoothing is handled with mixup label transform
         criterion = SoftTargetCrossEntropy()
-    elif args.smoothing:
+    elif args.enable_smoothing:
         criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
     else:
         criterion = torch.nn.CrossEntropyLoss()
@@ -375,28 +342,14 @@ def main(args):
             num_classes=args.nb_classes,
             global_pool='avg',
         )
-        # register_forward(teacher_model, args.teacher_model)
 
         if args.teacher_path.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.teacher_path, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.teacher_path, map_location='cpu')
-        
-        # process distributed model
-        from collections import OrderedDict
-        new_state_dict = OrderedDict()
-        for k in checkpoint['model']:
-            if k[:7] != 'module.':
-                new_state_dict[k] = checkpoint['model'][k]
-                break
-            new_key = k[7:]
-            new_state_dict[new_key] = checkpoint['model'][k]
 
-        if teacher_model.default_cfg['num_classes'] != teacher_model.num_classes:
-            new_state_dict.pop('head.weight')
-            new_state_dict.pop('head.bias')
-
+        new_state_dict = utils.process_pre_weights(teacher_model, checkpoint)
         teacher_model.load_state_dict(new_state_dict, strict=False)
         teacher_model.to(device)
         teacher_model.eval()
@@ -456,7 +409,7 @@ def main(args):
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
             optimizer, device, epoch, loss_scaler,
-            args.clip_grad, model_ema, mixup_fn, args=args
+            args, model_ema, mixup_fn
             # set_training_mode=args.finetune == ''  # keep in eval mode during finetuning
         )
 
