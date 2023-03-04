@@ -21,7 +21,7 @@ python3 -m torch.distributed.launch --nproc_per_node=$ARNOLD_WORKER_GPU \
     --master_port=$ARNOLD_WORKER_0_PORT  main.py \
     --resume models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224/checkpoint.pth \
     --distillation-type none \
-    --epochs 440 \
+    --epochs 430 \
     --output_dir models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224 \
     --data-set IMNET \
     --data-path datasets/imagenet \
