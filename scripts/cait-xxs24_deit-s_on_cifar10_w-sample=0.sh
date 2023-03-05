@@ -6,7 +6,7 @@ python3 main.py \
     --finetune models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224/checkpoint_best.pth \
     --distillation-type soft \
     --epochs 100 \
-    --output_dir models/cait-xxs24_deit-s_on_cifar10/all \
+    --output_dir models/cait-xxs24_deit-s_on_cifar10/w-sample=0 \
     --data-set CIFAR10 \
     --data-path datasets/cifar10 \
     --model MCAMDeit_small_patch16_224 \

@@ -6,7 +6,7 @@ python3 main.py \
     --finetune models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224/checkpoint_best.pth \
     --distillation-type soft \
     --epochs 100 \
-    --output_dir models/cait-xxs24_deit-s_on_voc12/all \
+    --output_dir models/cait-xxs24_deit-s_on_voc12/w-sample=0 \
     --data-set VOC12 \
     --data-path datasets/voc12/VOCdevkit/VOC2012 \
     --model MCAMDeit_small_patch16_224 \
