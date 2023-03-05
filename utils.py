@@ -278,7 +278,7 @@ def process_pre_weights(model, checkpoint):
             new_state_dict[new_key] = checkpoint['model'][k]
     
     state_dict = model.state_dict()
-    for k in ['head.weight', 'head.bias', 'head_dist.weight', 'head_dist.bias']:
+    for k in ['head.weight', 'head.bias', 'head_dist.weight', 'head_dist.bias', 'head_cov.weight', 'head_cov.bias']:
         if k in new_state_dict and new_state_dict[k].shape != state_dict[k].shape:
             print(f"Removing key {k} from pretrained checkpoint")
             del new_state_dict[k]
