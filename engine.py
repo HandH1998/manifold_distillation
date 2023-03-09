@@ -50,8 +50,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
                 loss_base, loss_dist, loss_cam, loss_mf_sample, loss_mf_patch, loss_mf_rand = criterion(samples, outputs, targets)
                 loss = loss_base + loss_dist + loss_cam + loss_mf_sample + loss_mf_patch + loss_mf_rand
             else:
-                loss_cls_tok_base, loss_patch_base = criterion(samples, outputs, targets)
-                loss = loss_cls_tok_base + loss_patch_base
+                loss_cls_tok_base = criterion(samples, outputs, targets)
+                loss = loss_cls_tok_base
 
         loss_value = loss.item()
 
@@ -84,7 +84,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
             metric_logger.update(loss_mf_rand=loss_mf_rand.item())
         else:
             metric_logger.update(loss_cls_tok_base=loss_cls_tok_base.item())
-            metric_logger.update(loss_patch_base=loss_patch_base.item())
+            # metric_logger.update(loss_patch_base=loss_patch_base.item())
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

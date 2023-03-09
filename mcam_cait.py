@@ -153,7 +153,7 @@ class MCAMCait(Cait):
             if self.training or is_teacher:
                 return x, x_patch_logits, block_outs, cams, patch_attn
             else:
-                return (x + x_patch_logits) / 2, block_outs, cams, patch_attn
+                return x, block_outs, cams, patch_attn
         else:
             x, x_patch, cls_attn_weights, patch_attn_weights = self.forward_features(x)
             x_patch_logits, cams, patch_attn = self.cal_cams(w, h, x_patch, cls_attn_weights, patch_attn_weights, n_layers, attention_type)
@@ -162,7 +162,7 @@ class MCAMCait(Cait):
             if self.training or is_teacher:
                 return x, x_patch_logits, cams, patch_attn
             else:
-                return (x + x_patch_logits) / 2, cams, patch_attn
+                return x, cams, patch_attn
             
     def cal_cams(self, w, h, x_patch, cls_attn_weights, patch_attn_weights, n_layers=12, attention_type='fused'):
         n, p, c = x_patch.shape

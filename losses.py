@@ -64,10 +64,11 @@ class DistillationLoss(nn.Module):
         patch_logits_s, block_outs_s, cls_attentions_s, patch_attn_s = outputs_s[1:]
 
         cls_tok_base_loss = self.base_criterion(outputs, labels)
-        patch_base_loss = self.base_criterion(patch_logits_s, labels)
+        # patch_base_loss = self.base_criterion(patch_logits_s, labels)
         # base loss
         if self.distillation_type == 'none':
-            return cls_tok_base_loss, patch_base_loss
+            # return cls_tok_base_loss, patch_base_loss
+            return cls_tok_base_loss
 
         # don't backprop throught the teacher
         with torch.no_grad():

@@ -20,17 +20,17 @@
 #     --nnodes=$ARNOLD_WORKER_NUM --node_rank=$ARNOLD_ID --master_addr=$ARNOLD_WORKER_0_HOST \
 #     --master_port=$ARNOLD_WORKER_0_PORT  
 python3 main.py \
-    --finetune models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224/checkpoint_best.pth \
+    --finetune ../manifold-distillation/models/origin_student/deit_small_patch16_224-cd65a155.pth \
     --distillation-type none \
     --epochs 100 \
-    --output_dir models/finetune_pre_student_on_cifar100/MCAMDeit_small_patch16_224 \
+    --output_dir ../manifold-distillation/models/finetune_ori_deit_s_no_cam_branch_on_cifar100 \
     --data-set CIFAR100 \
-    --data-path datasets/cifar100 \
+    --data-path ../manifold-distillation/datasets/cifar100 \
     --model MCAMDeit_small_patch16_224 \
     --model-ema \
     --enable-mixup \
     --drop-path 0.1 \
-    2>&1 | tee logs/finetune_pre_deit_s_on_cifar100_train_100epoch.log
+    2>&1 | tee ../manifold-distillation/logs/finetune_ori_deit_s_no_cam_branch_on_cifar100.log
 
 # mv train.log models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224
 # hdfs dfs -put models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224/ \
