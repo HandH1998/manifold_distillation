@@ -14,7 +14,7 @@ cd .. && cd ..
 
 mkdir -p models/ && cd models && \
 hdfs dfs -get /home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/origin_student
-hdfs dfs -get /home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/finetune_teacher_on_imagenet
+hdfs dfs -get /home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/finetune_teacher_on_imagenet_400epoch
 cd ..
 # python3 -m torch.distributed.launch --nproc_per_node=8 main.py \
 
@@ -29,7 +29,7 @@ python3 -m torch.distributed.launch --nproc_per_node=$ARNOLD_WORKER_GPU \
     --data-path datasets/imagenet \
     --model MCAMDeit_tiny_patch16_224 \
     --teacher-model MCAMCait_xxs24_224 \
-    --teacher-path models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224/checkpoint_best.pth \
+    --teacher-path models/finetune_teacher_on_imagenet_400epoch/MCAMCait_xxs24_224/checkpoint_best.pth \
     --model-ema \
     --enable-mixup \
     --distillation-alpha 0.5 \
