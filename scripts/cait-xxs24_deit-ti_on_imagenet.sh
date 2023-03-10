@@ -14,37 +14,38 @@ cd .. && cd ..
 
 mkdir -p models/ && cd models && \
 hdfs dfs -get /home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/origin_student
+hdfs dfs -get /home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/finetune_teacher_on_imagenet
 cd ..
 # python3 -m torch.distributed.launch --nproc_per_node=8 main.py \
 
 python3 -m torch.distributed.launch --nproc_per_node=$ARNOLD_WORKER_GPU \
     --nnodes=$ARNOLD_WORKER_NUM --node_rank=$ARNOLD_ID --master_addr=$ARNOLD_WORKER_0_HOST \
     --master_port=$ARNOLD_WORKER_0_PORT  main.py \
-    --finetune models/origin_student/deit_small_patch16_224-cd65a155.pth \
-    --distillation-type none \
+    --finetune models/origin_student/deit_tiny_patch16_224-a1311bcf.pth \
+    --distillation-type soft \
     --epochs 300 \
-    --output_dir models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224 \
+    --output_dir models/cait-xxs24_deit-ti_on_imagenet \
     --data-set IMNET \
     --data-path datasets/imagenet \
-    --model MCAMDeit_small_patch16_224 \
+    --model MCAMDeit_tiny_patch16_224 \
+    --teacher-model MCAMCait_xxs24_224 \
+    --teacher-path models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224/checkpoint_best.pth \
     --model-ema \
     --enable-mixup \
+    --distillation-alpha 0.5 \
+    --distillation-beta 1.0 \
+    --distillation-gamma 2.0 \
+    --distillation-tau 1 \
+    --w-patch 4 \
+    --w-sample 0.0 \
+    --w-rand 0.2 \
+    --K 192 \
+    --s-id 0 1 2 3 8 9 10 11 \
+    --t-id 0 1 2 3 20 21 22 23 \
     --drop-path 0 \
-    2>&1 | tee train.log
-
-mv train.log models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224
-hdfs dfs -put models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224/ \
-/home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/finetune_student_on_imagenet/
-
-
-  
-
-
-
-
-  
-
-
-
-
+    --patch-attn-refine \
+    --patch-size 16 \
+    --n-layers-t 2 \
+    --n-layers 3 \
+    --attention-type fused
 

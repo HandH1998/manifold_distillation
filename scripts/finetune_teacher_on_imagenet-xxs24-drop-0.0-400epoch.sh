@@ -21,19 +21,19 @@ python3 -m torch.distributed.launch --nproc_per_node=$ARNOLD_WORKER_GPU \
     --master_port=$ARNOLD_WORKER_0_PORT  main.py \
     --finetune models/origin_teacher/XXS24_224.pth \
     --distillation-type none \
-    --epochs 300 \
+    --epochs 400 \
     --output_dir models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224 \
     --data-set IMNET \
     --data-path datasets/imagenet \
     --model MCAMCait_xxs24_224 \
     --model-ema \
     --enable-mixup \
-    --drop-path 0.05 \
+    --drop-path 0.0 \
     2>&1 | tee train.log
 
 mv train.log models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224
 hdfs dfs -put models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224 \
-/home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/finetune_teacher_on_imagenet/
+/home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/finetune_teacher_on_imagenet_0.0-400epoch/
 
 
 

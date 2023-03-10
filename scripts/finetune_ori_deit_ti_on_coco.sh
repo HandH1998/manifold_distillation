@@ -20,20 +20,23 @@
 #     --nnodes=$ARNOLD_WORKER_NUM --node_rank=$ARNOLD_ID --master_addr=$ARNOLD_WORKER_0_HOST \
 #     --master_port=$ARNOLD_WORKER_0_PORT  
 python3 main.py \
-    --finetune models/finetune_teacher_on_imagenet/MCAMCait_xxs24_224/checkpoint_best.pth \
+    --finetune models/origin_student/deit_tiny_patch16_224-a1311bcf.pth \
     --distillation-type none \
-    --epochs 100 \
-    --output_dir models/finetune_pre_teacher_on_cifar100/MCAMCait_xxs24_224 \
-    --data-set CIFAR100 \
-    --data-path datasets/cifar100 \
-    --model MCAMCait_xxs24_224 \
+    --epochs 20 \
+    --output_dir models/finetune_ori_deit_ti_on_coco \
+    --data-set COCO \
+    --data-path datasets/coco \
+    --model MCAMDeit_tiny_patch16_224 \
     --model-ema \
     --enable-mixup \
     --drop-path 0.1 \
-    2>&1 | tee logs/finetune_pre_teacher_on_cifar100_train_100epoch.log
+    --img-list datasets/coco \
+    --label-file-path datasets/coco/cls_labels.npy \
+    --multilabel \
+    2>&1 | tee logs/finetune_ori_deit_ti_on_coco.log
 
-# mv train.log models/finetune_student_on_imagenet/MCAMDeit_tiny_patch16_224
-# hdfs dfs -put models/finetune_student_on_imagenet/MCAMDeit_tiny_patch16_224/ \
+# mv train.log models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224
+# hdfs dfs -put models/finetune_student_on_imagenet/MCAMDeit_small_patch16_224/ \
 # /home/byte_arnold_hl_mlnlc/user/zhangying.1998/models/finetune_student_on_imagenet/
 
 
